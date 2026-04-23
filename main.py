@@ -20,7 +20,25 @@ logger = logging.getLogger("gom-ai")
 # Environment
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env", override=True)
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(title="Gom AI Multi-Agent Debate Server")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://thearchivist.vercel.app",
+        "https://thearchivist-edemdeeaf4ahamgs.southeastasia-01.azurewebsites.net",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000",
+        "http://localhost:8000"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 engine = DebateEngine()
 
 UPLOAD_FOLDER = "uploads"
