@@ -27,7 +27,7 @@ app = FastAPI(title="Gom AI Multi-Agent Debate Server")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://thearchivist.vercel.app",
+        "https://thearchivistai.vercel.app",
         "https://thearchivist-edemdeeaf4ahamgs.southeastasia-01.azurewebsites.net",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
