@@ -1,4 +1,7 @@
-from agents.base_agent import BaseAgent
+try:
+    from app.agents.base_agent import BaseAgent
+except ModuleNotFoundError:
+    from agents.base_agent import BaseAgent
 
 class GPTAgent(BaseAgent):
     def __init__(self):

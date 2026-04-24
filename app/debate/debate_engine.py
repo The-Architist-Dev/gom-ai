@@ -1,9 +1,15 @@
 import asyncio
 import logging
 import json
-from agents.vision_agent import VisionAgent
-from agents.specialists import GPTAgent, GrokAgent, GeminiAgent
-from agents.base_agent import BaseAgent
+
+try:
+    from app.agents.base_agent import BaseAgent
+    from app.agents.specialists import GPTAgent, GrokAgent, GeminiAgent
+    from app.agents.vision_agent import VisionAgent
+except ModuleNotFoundError:
+    from agents.base_agent import BaseAgent
+    from agents.specialists import GPTAgent, GrokAgent, GeminiAgent
+    from agents.vision_agent import VisionAgent
 
 logger = logging.getLogger("gom-ai.debate.engine")
 
