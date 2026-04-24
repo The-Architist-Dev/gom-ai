@@ -13,7 +13,8 @@ jobs:
             contents: read
 
         steps:
-            - uses: actions/checkout@v4
+            - name: Checkout source code
+              uses: actions/checkout@v4
 
             - name: Set up Python 3.14
               uses: actions/setup-python@v5
@@ -21,7 +22,9 @@ jobs:
                   python-version: "3.14"
 
             - name: Check Python version
-              run: python --version
+              run: |
+                  python --version
+                  python -m pip --version
 
             - name: Install dependencies for validation
               run: |
@@ -29,20 +32,22 @@ jobs:
                   pip install -r requirements.txt
 
             - name: Validate FastAPI app import
-    run: |
-        python -c "from app.main import app; print('FastAPI app import OK:', app.title)"
+              run: |
+                  python -c "from app.main import app; print('FastAPI app import OK:', app.title)"
 
-          - name: Upload artifact for deployment job
-            uses: actions/upload-artifact@v4
-            with:
-              name: python-app
-              path: |
-                .
-                !.git/
-                !.github/
-                !__pycache__/
-                !.pytest_cache/
-                !antenv/
+            - name: Upload artifact for deployment job
+              uses: actions/upload-artifact@v4
+              with:
+                  name: python-app
+                  path: |
+                      .
+                      !.git/
+                      !.github/
+                      !__pycache__/
+                      !.pytest_cache/
+                      !antenv/
+                      !venv/
+                      !.venv/
 
     deploy:
         runs-on: ubuntu-latest
@@ -66,6 +71,7 @@ jobs:
 
             - name: Deploy to Azure Web App
               uses: azure/webapps-deploy@v3
+              id: deploy-to-webapp
               with:
                   app-name: "TheArchivistAI"
                   slot-name: "Production"
