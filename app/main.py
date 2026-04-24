@@ -18,7 +18,7 @@ logging.basicConfig(
 logger = logging.getLogger("gom-ai")
 
 # Environment
-load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env", override=True)
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env", override=True)
 
 from fastapi.middleware.cors import CORSMiddleware
 
