@@ -49,7 +49,7 @@ DEFAULT_ALLOWED_ORIGINS = {
     "https://thearchivist.vercel.app",
     "https://thearchivistai.vercel.app",
     "https://the-archivist-ai.vercel.app",
-    "https://thearchivist-edemdeeaf4ahahmgs.southeastasia-01.azurewebsites.net",
+    "https://thearchivist-edemdeeaf4ahamgs.southeastasia-01.azurewebsites.net",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:8000",
