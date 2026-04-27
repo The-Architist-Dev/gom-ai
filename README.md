@@ -6,7 +6,7 @@ Hệ thống AI phân tích gốm sứ sử dụng kiến trúc multi-agent deba
 
 Service nhận ảnh gốm sứ và chạy qua 4 phase:
 
-- **Phase 0 — Vision Analysis**: Google Gemini 3.1 Flash Lite phân tích hình ảnh, trích xuất visual features (màu sắc, hoa văn, chất liệu, hình dáng, xuất xứ dự đoán).
+- **Phase 0 — Vision Analysis**: Google Gemini (fallback: 2.5 Flash Lite → 3 Flash Preview → 2.5 Flash) phân tích hình ảnh, trích xuất visual features (màu sắc, hoa văn, chất liệu, hình dáng, xuất xứ dự đoán).
 - **Phase 1 — Independent Predictions**: 3 agent (GPT Historian, Grok Critic, Global Ceramics Expert) đưa ra dự đoán độc lập dựa trên visual features. Tất cả chạy song song trên Groq Llama 3.3-70b.
 - **Phase 2 — Debate Round**: Các agent tấn công lập luận của nhau và bảo vệ quan điểm của mình, điều chỉnh confidence. Chạy song song.
 - **Phase 3 — Final Judging**: JudgeAgent (Groq Llama 3.3-70b) tổng hợp tất cả bằng chứng và tranh luận, đưa ra kết luận cuối cùng.
@@ -14,7 +14,7 @@ Service nhận ảnh gốm sứ và chạy qua 4 phase:
 ## Công nghệ
 
 - **FastAPI** + Uvicorn (async Python web server)
-- **Google Gemini 3.1 Flash Lite** (vision analysis — Phase 0)
+- **Google Gemini 2.5 Flash Lite** (vision analysis — Phase 0, with fallback to 3 Flash Preview / 2.5 Flash)
 - **Groq Llama 3.3-70b** (tất cả text agents + judge — Phase 1, 2, 3)
 - **httpx** (async HTTP client cho Wikipedia API, Google token verification)
 - **tenacity** (retry với exponential backoff cho rate limits)
