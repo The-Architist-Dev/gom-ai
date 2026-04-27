@@ -1,13 +1,13 @@
 import json
 import logging
-import re
 import os
-import httpx
+import re
+
 from openai import AsyncOpenAI
-import tenacity
-from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger("gom-ai.agents.base")
+
 
 class BaseAgent:
     def __init__(self, name: str, personality: str, provider: str, model_id: str):
@@ -23,12 +23,11 @@ class BaseAgent:
         if provider == "openai": return os.getenv("OPENAI_API_KEY")
         return None
 
+    # Extract JSON from LLM response, handling various formatting quirks
     def _extract_json(self, text: str) -> dict:
-        """
-        Extract JSON from LLM response reliably, handling weird formatting.
-        """
-        if not text: return {"error": "Empty response"}
-        
+        if not text:
+            return {"error": "Empty response"}
+
         try:
             # 1. Look for JSON between ```json and ```
             match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
@@ -41,7 +40,7 @@ class BaseAgent:
 
             # Cleanup potential trailing/leading garbage
             return json.loads(raw_json)
-            
+
         except Exception as e:
             logger.warning(f"[{self.name}] JSON extract failed ({e}). Text: {text[:200]}...")
             # Emergency attempt: what if it is directly JSON but has extra lines?
@@ -59,10 +58,8 @@ class BaseAgent:
         stop=stop_after_attempt(3),
         reraise=True
     )
+    # Call the appropriate LLM provider (Google Gemini, Groq, or OpenAI)
     async def _call_llm(self, prompt: str) -> str:
-        """
-        Call the appropriate provider.
-        """
         if not self.api_key:
             return f"{{\"error\": \"API Key missing for {self.provider}\"}}"
 
@@ -96,10 +93,8 @@ class BaseAgent:
 
         return ""
 
+    # Phase 1: Initial prediction based on visual evidence
     async def predict(self, visual_features: dict) -> dict:
-        """
-        Phase 1: Initial prediction based on visual evidence.
-        """
         prompt = (
             f"You are the '{self.name}'. Personality: {self.personality}\n"
             f"Based on the following visual evidence:\n{json.dumps(visual_features, indent=2)}\n\n"
@@ -126,12 +121,13 @@ class BaseAgent:
         raw_resp = await self._call_llm(prompt)
         return self._extract_json(raw_resp)
 
+    # Phase 2: Criticize others' predictions and defend own position
     async def debate(self, my_prediction: dict, other_predictions: list) -> dict:
-        """
-        Phase 2: Criticize others and defend self.
-        """
-        other_data = "\n\n".join([f"Agent {p.get('agent_name', 'Unknown')} said: {json.dumps(p.get('prediction', {}))} (Conf: {p.get('confidence', 0.5)})" for p in other_predictions])
-        
+        other_data = "\n\n".join([
+            f"Agent {p.get('agent_name', 'Unknown')} said: {json.dumps(p.get('prediction', {}))} (Conf: {p.get('confidence', 0.5)})"
+            for p in other_predictions
+        ])
+
         prompt = (
             f"You are the '{self.name}'. Personality: {self.personality}\n"
             f"Your previous prediction was: {json.dumps(my_prediction.get('prediction', {}))}\n\n"

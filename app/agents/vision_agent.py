@@ -1,14 +1,16 @@
+import json
 import logging
 import os
+
 from google import genai as google_genai
 from google.genai import types as genai_types
-from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger("gom-ai.agents.vision")
 
 
+# Raised on 429 so tenacity can retry
 class _RateLimitError(Exception):
-    """Raised on 429 so tenacity can retry."""
     pass
 
 
@@ -23,10 +25,8 @@ class VisionAgent:
         stop=stop_after_attempt(3),
         reraise=True
     )
+    # Analyze pottery image to extract core visual features
     async def analyze(self, image_bytes: bytes) -> dict:
-        """
-        Analyze pottery image to extract core visual features.
-        """
         logger.info("[VisionAgent] Analyzing image...")
         if not self.api_key:
             return {"error": "GOOGLE_API_KEY missing"}
@@ -55,7 +55,6 @@ class VisionAgent:
                     response_mime_type="application/json"
                 )
             )
-            import json
             return json.loads(response.text)
         except _RateLimitError:
             raise  # Let tenacity handle retries

@@ -1,6 +1,6 @@
 import asyncio
-import logging
 import json
+import logging
 
 try:
     from app.agents.base_agent import BaseAgent
@@ -13,6 +13,7 @@ except ModuleNotFoundError:
 
 logger = logging.getLogger("gom-ai.debate.engine")
 
+
 class DebateEngine:
     def __init__(self):
         self.vision_agent = VisionAgent()
@@ -21,10 +22,8 @@ class DebateEngine:
         self.gemini = GeminiAgent()
         self.judge = JudgeAgent()
 
+    # Orchestrate the full multi-agent debate pipeline: vision → predict → debate → judge
     async def start_debate(self, image_bytes: bytes) -> dict:
-        """
-        Orchestrate the multi-agent debate from image analysis to final judge report.
-        """
         # Phase 0: Vision Analysis
         try:
             visual_features = await self.vision_agent.analyze(image_bytes)
@@ -34,7 +33,7 @@ class DebateEngine:
             return {"error": "API đã hết quota. Vui lòng thử lại sau vài phút."}
         if "error" in visual_features:
             return {"error": visual_features["error"]}
-            
+
         if visual_features.get("is_pottery") is False:
             return {"error": "Rất tiếc, hệ thống không nhận diện được gốm sứ trong bức ảnh này. Vui lòng thử lại với một bức ảnh khác."}
 
@@ -46,10 +45,12 @@ class DebateEngine:
             self.gemini.predict(visual_features)
         )
         # Add basic info and validation if missing
-        for i, r in enumerate(results): 
+        for i, r in enumerate(results):
             name = ["GPT", "Grok", "Gemini"][i]
-            if not r.get("agent_name"): r["agent_name"] = name
-            if r.get("confidence") is None: r["confidence"] = 0.5
+            if not r.get("agent_name"):
+                r["agent_name"] = name
+            if r.get("confidence") is None:
+                r["confidence"] = 0.5
             # Ensure 'prediction' key exists to avoid crash in Phase 2
             if "prediction" not in r:
                 logger.warning(f"Agent {name} failed to provide 'prediction'. Using fallback.")
@@ -59,19 +60,21 @@ class DebateEngine:
                     "era": "Unknown",
                     "style": "Unknown"
                 }
-                if "error" in r: r["evidence"] = f"Error: {r['error']}"
-                else: r["evidence"] = "Failed to parse AI response."
+                if "error" in r:
+                    r["evidence"] = f"Error: {r['error']}"
+                else:
+                    r["evidence"] = "Failed to parse AI response."
 
         # Phase 2: The Debate (Attacks/Defenses) - RUNNING IN PARALLEL
         logger.info("[DebateEngine] Starting Phase 2: Concurrent Debate Round")
-        
+
         debate_tasks = []
         for i, agent in enumerate([self.gpt, self.grok, self.gemini]):
             me = results[i]
             others = [results[j] for j in range(3) if j != i]
             debate_tasks.append(agent.debate(me, others))
-        
-        # All agents think at the same time
+
+        # All agents debate concurrently
         debates = await asyncio.gather(*debate_tasks)
 
         # Apply confidence adjustments from debate
@@ -98,6 +101,7 @@ class DebateEngine:
             "final_report": final_report
         }
 
+
 class JudgeAgent(BaseAgent):
     def __init__(self):
         super().__init__(
@@ -107,10 +111,8 @@ class JudgeAgent(BaseAgent):
             model_id="llama-3.3-70b-versatile"
         )
 
+    # Phase 3: Final synthesis — weigh all evidence and produce authoritative conclusion
     async def evaluate(self, predictions: list, visual_features: dict) -> dict:
-        """
-        Final synthesis and reasoning.
-        """
         prompt = (
             f"You are the 'Final Judge'. Personality: {self.personality}\n"
             f"Visual features: {json.dumps(visual_features, indent=2)}\n\n"
