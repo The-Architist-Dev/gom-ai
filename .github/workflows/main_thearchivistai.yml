@@ -16,10 +16,10 @@ jobs:
             - name: Checkout source code
               uses: actions/checkout@v4
 
-            - name: Set up Python 3.14
+            - name: Set up Python 3.12
               uses: actions/setup-python@v5
               with:
-                  python-version: "3.14"
+                  python-version: "3.12"
 
             - name: Check Python version
               run: |
@@ -40,14 +40,10 @@ jobs:
               with:
                   name: python-app
                   path: |
-                      .
-                      !.git/
-                      !.github/
-                      !__pycache__/
-                      !.pytest_cache/
-                      !antenv/
-                      !venv/
-                      !.venv/
+                      app/
+                      requirements.txt
+                      .env
+                      *.py
 
     deploy:
         runs-on: ubuntu-latest
