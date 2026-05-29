@@ -7,9 +7,9 @@ Hệ thống AI phân tích gốm sứ sử dụng kiến trúc multi-agent deba
 Service nhận ảnh gốm sứ và chạy qua 4 phase:
 
 - **Phase 0 — Vision Analysis**: Google Gemini (fallback: 2.5 Flash Lite → 3 Flash Preview → 2.5 Flash) phân tích hình ảnh, trích xuất visual features (màu sắc, hoa văn, chất liệu, hình dáng, xuất xứ dự đoán).
-- **Phase 1 — Independent Predictions**: 3 agent (GPT Historian, Grok Critic, Global Ceramics Expert) đưa ra dự đoán độc lập dựa trên visual features. Tất cả chạy song song trên Groq Llama 3.3-70b.
+- **Phase 1 — Independent Predictions**: 3 chuyên gia AI độc lập (**Lịch Sử Gốm**, **Chuyên gia Chữ ký Lò và Hình thái Gốm**, và **Chuyên Gia Gốm Toàn Cầu**) đưa ra dự đoán độc lập dựa trên visual features và kết quả đối sánh Google Lens thời gian thực. Tất cả chạy song song trên Groq Llama 3.3-70b.
 - **Phase 2 — Debate Round**: Các agent tấn công lập luận của nhau và bảo vệ quan điểm của mình, điều chỉnh confidence. Chạy song song.
-- **Phase 3 — Final Judging**: JudgeAgent (Groq Llama 3.3-70b) tổng hợp tất cả bằng chứng và tranh luận, đưa ra kết luận cuối cùng.
+- **Phase 3 — Final Judging**: Trọng Tài Phán Quyết (JudgeAgent - Groq Llama 3.3-70b) tổng hợp tất cả bằng chứng và tranh luận, đối chiếu trực quan, đưa ra kết luận cuối cùng.
 
 ## Công nghệ
 
@@ -70,6 +70,22 @@ Lấy API keys:
 - **Groq**: https://console.groq.com/keys
 - **Google Gemini**: https://aistudio.google.com/app/apikey
 - **Google Client ID** (cho social login): Google Cloud Console → APIs & Services → Credentials
+
+## 🌐 Cấu Hình Google Lens Trên Production (Browserless.io)
+
+Để chạy được Selenium quét Google Lens trên môi trường máy chủ đám mây (như **Azure App Service** - vốn không có sẵn môi trường đồ họa và Google Chrome), hệ thống hỗ trợ luồng định tuyến thông minh qua **Remote Cloud Browser**:
+
+### 1. Cách hoạt động
+- **Tại local**: Hệ thống dùng Chrome cài sẵn trên máy tính của bạn.
+- **Tại production**: Hệ thống tự động kết nối qua WebSocket tới cụm trình duyệt đám mây của **Browserless.io** khi phát hiện thấy biến cấu hình `BROWSERLESS_TOKEN`.
+
+### 2. Hướng dẫn thiết lập (Miễn phí)
+1. Đăng ký tài khoản miễn phí (tặng 1000+ lượt quét/tháng) tại [Browserless.io](https://www.browserless.io/).
+2. Copy mã **API Token** từ Dashboard chính của Browserless.
+3. Thiết lập biến môi trường trên **Azure Portal** (hoặc file `.env` trên VPS):
+   - **Key**: `BROWSERLESS_TOKEN`
+   - **Value**: *(Mã Token của bạn)*
+4. Khởi động lại App Service để áp dụng cấu hình mới. Trích dẫn Google Lens sẽ tự động kích hoạt thành công trên mọi nền tảng!
 
 ## Chạy server
 
