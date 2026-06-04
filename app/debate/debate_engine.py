@@ -11,6 +11,15 @@ except ModuleNotFoundError:
     from agents.specialists import GPTAgent, GrokAgent, GeminiAgent
     from agents.vision_agent import VisionAgent
 
+try:
+    from app.google_lens_service import analyze_lens_keywords
+except ModuleNotFoundError:
+    try:
+        from google_lens_service import analyze_lens_keywords
+    except ModuleNotFoundError:
+        def analyze_lens_keywords(lens_results):
+            return ""
+
 logger = logging.getLogger("gom-ai.debate.engine")
 
 
@@ -61,6 +70,55 @@ class DebateEngine:
                 agent.api_key = agent.get_api_key(agent.provider)
 
     # Orchestrate the full multi-agent debate pipeline: vision → predict → debate → judge + Google Lens in parallel
+    def _agent_error_result(self, agent_name: str, error, lang: str) -> dict:
+        message = str(error)
+        evidence = (
+            f"Agent temporarily unavailable: {message[:220]}"
+            if lang == "en" else
+            f"Agent tam thoi khong kha dung: {message[:220]}"
+        )
+        return {
+            "agent_name": agent_name,
+            "prediction": {
+                "ceramic_line": "Unknown",
+                "country": "Unknown",
+                "era": "Unknown",
+                "style": "Unknown",
+            },
+            "confidence": 0.0,
+            "evidence": evidence,
+            "error": message,
+        }
+
+    def _fallback_final_report(self, results: list[dict], lang: str, error=None) -> dict:
+        usable = [
+            r for r in results
+            if isinstance(r, dict) and "error" not in r and r.get("prediction")
+        ]
+        best = max(usable, key=lambda r: float(r.get("confidence") or 0), default=None)
+        if best:
+            prediction = best.get("prediction") or {}
+            line = prediction.get("ceramic_line") or "Unknown"
+            reasoning = (
+                f"The judge model was temporarily unavailable, so the result uses the strongest available agent prediction: {line}."
+                if lang == "en" else
+                f"Model giam khao tam thoi khong kha dung, nen ket qua dung du doan manh nhat con lai: {line}."
+            )
+            return {
+                "final_prediction": line,
+                "certainty": int(float(best.get("confidence") or 0.5) * 100),
+                "reasoning": reasoning,
+            }
+
+        message = (
+            "The AI system is temporarily overloaded. Please try again in a few minutes."
+            if lang == "en" else
+            "He thong AI dang tam thoi qua tai. Vui long thu lai sau vai phut."
+        )
+        if error:
+            message = f"{message} ({str(error)[:180]})"
+        return {"error": message}
+
     async def start_debate(self, image_bytes: bytes, lang: str = "vi") -> dict:
         # Initialize temporary file variables for parallel Google Lens search
         import uuid
@@ -166,14 +224,38 @@ class DebateEngine:
 
             # Phase 1: Independent Predictions (injecting lens_results)
             logger.info("[DebateEngine] Starting Phase 1: Independent Predictions with Google Lens results")
-            results = await asyncio.gather(
+            phase1_raw = await asyncio.gather(
                 self.gpt.predict(visual_features, lens_results, lang),
                 self.grok.predict(visual_features, lens_results, lang),
-                self.gemini.predict(visual_features, lens_results, lang)
+                self.gemini.predict(visual_features, lens_results, lang),
+                return_exceptions=True,
             )
+            agent_names = ["Ceramic History", "Kiln Signature and Ceramic Morphology Expert", "Global Ceramics Expert"]
+            results = []
+            for i, item in enumerate(phase1_raw):
+                if isinstance(item, Exception):
+                    logger.error(f"[DebateEngine] Agent {agent_names[i]} failed during Phase 1: {item}")
+                    results.append(self._agent_error_result(agent_names[i], item, lang))
+                elif isinstance(item, dict):
+                    results.append(item)
+                else:
+                    results.append(self._agent_error_result(agent_names[i], "Invalid agent response", lang))
+
+            if all(isinstance(r, dict) and "error" in r for r in results):
+                final_report = self._fallback_final_report(results, lang, results[0].get("error"))
+                return {
+                    "visual_features": visual_features,
+                    "agent_predictions": results,
+                    "final_report": final_report,
+                    "iterations_run": 0,
+                    "lens_results": lens_results,
+                    "lens_status": lens_status,
+                    "lang": lang,
+                    "error": final_report.get("error"),
+                }
             # Add basic info and validation if missing
             for i, r in enumerate(results):
-                name = ["Lịch Sử Gốm", "Chuyên gia Chữ ký Lò và Hình thái Gốm", "Chuyên Gia Gốm Toàn Cầu"][i]
+                name = agent_names[i]
                 if not r.get("agent_name"):
                     r["agent_name"] = name
                 if r.get("confidence") is None:
@@ -208,10 +290,13 @@ class DebateEngine:
                     debate_tasks.append(agent.debate(me, others, lens_results, lang))
 
                 # All agents debate concurrently
-                debates = await asyncio.gather(*debate_tasks)
+                debates = await asyncio.gather(*debate_tasks, return_exceptions=True)
 
                 # Apply confidence adjustments and update predictions from debate
                 for i, d in enumerate(debates):
+                    if isinstance(d, Exception):
+                        results[i]["debate_details"] = {"error": str(d)}
+                        continue
                     if not isinstance(d, dict) or "error" in d:
                         results[i]["debate_details"] = d if isinstance(d, dict) else {"error": "Invalid debate result"}
                         continue
@@ -231,7 +316,11 @@ class DebateEngine:
 
                 # Final Judging for this round (injecting lens_results)
                 logger.info(f"[DebateEngine] Judging Debate Round {iteration + 1}")
-                final_report = await self.judge.evaluate(results, visual_features, lens_results, lang)
+                try:
+                    final_report = await self.judge.evaluate(results, visual_features, lens_results, lang)
+                except Exception as e:
+                    logger.error(f"[DebateEngine] Judge failed during round {iteration + 1}: {e}")
+                    final_report = self._fallback_final_report(results, lang, e)
 
                 # Extract certainty from Judge (0-100) and normalize to 0.0-1.0
                 try:
@@ -266,18 +355,20 @@ class JudgeAgent(BaseAgent):
         super().__init__(
             name="Final Judge",
             personality="A neutral, expert arbiter who weighs all evidence and logic. Synthesizes discordant views into a single authoritative conclusion.",
-            provider="groq",
-            model_id="llama-3.3-70b-versatile"
+            provider="openai",
+            model_id="gpt-4o"
         )
 
     # Phase 3: Final synthesis — weigh all evidence and produce authoritative conclusion
     async def evaluate(self, predictions: list, visual_features: dict, lens_results: list = None, lang: str = "vi") -> dict:
         lens_context = ""
         if lens_results:
+            signals = analyze_lens_keywords(lens_results)
             lens_context = (
-                "Google Lens visual search matched these web pages for this image (EXTREMELY IMPORTANT source of truth to cross-reference):\n"
+                "Google Lens visual search matched these web pages for this image (reference material for verification — use to fact-check agent claims, NOT as primary evidence):\n"
                 + "\n".join([f"- {r['title']} (URL: {r['url']})" for r in lens_results])
                 + "\n\n"
+                + signals
             )
 
         is_en = lang == "en"
@@ -294,27 +385,53 @@ class JudgeAgent(BaseAgent):
             f"Visual features extracted from the image:\n{json.dumps(visual_features, indent=2, ensure_ascii=False)}\n\n"
             f"{lens_context}"
             f"Agent predictions and their debate outputs:\n{json.dumps(predictions, indent=2, ensure_ascii=False)}\n\n"
-            "YOUR TASK: Synthesize the FINAL prediction. You must be HIGHLY CRITICAL AND ANALYTICAL.\n\n"
-            "IMPORTANT RULES:\n"
-            "1. DO NOT just vote by majority. Cross-examine the 'visual_features' against each agent's claims. "
-            "If an agent claims a ceramic line but the visual evidence contradicts it, you MUST overrule them.\n"
-            "2. AVOID BIAS: Do not automatically assume Vietnamese origin. Evaluate globally.\n"
-            "3. Prioritize concrete visual facts over an agent's self-reported confidence.\n"
-            "4. HIGH INTELLECT LENS INTEGRATION: Google Lens results represent real-world physical image matches (ground truth). "
-            "If Google Lens indicates a museum-matched or highly specific catalog identity (e.g., 'Sawankhalok ceramic bowl from Thailand', 'Sukhothai Ware', 'Bao tang Lam Dong', 'Bat Trang antique', etc.), "
-            "you MUST strongly favor this identity, provided it is visually plausible. "
-            "Do not fall into the trap of confusing lookalikes (e.g., confusing Thai Sawankhalok celadon featuring olive-green glaze and incised lines with Chinese Song Dynasty Yaozhou or Longquan celadon. They look extremely similar, but if Lens points to Sawankhalok/Thailand, prioritize Sawankhalok/Thailand!).\n"
-            "5. In your 'reasoning', explicitly explain WHY you chose the final result and WHY others were wrong.\n\n"
+            "YOUR TASK: Synthesize the FINAL prediction based primarily on the MULTI-AGENT DEBATE.\n"
+            "You are the arbiter of a scholarly debate between 3 expert agents. Your job is to weigh their arguments, "
+            "cross-examine their evidence, and reach your own independent conclusion.\n\n"
+            "EVIDENCE PRIORITY HIERARCHY:\n"
+            "1. AGENT EXPERT REASONING (PRIMARY — 40%): Each agent brings unique expertise (history, kiln/morphology, global culture). "
+            "Evaluate the QUALITY and DEPTH of each agent's argument. A well-reasoned analysis with specific visual evidence "
+            "should carry more weight than a vague claim with high self-reported confidence.\n"
+            "2. VISUAL FEATURES (30%): Physical characteristics directly observed in the image — glaze type, body color, "
+            "decoration technique, foot ring shape, firing marks. These are OBJECTIVE facts that must be consistent with any prediction.\n"
+            "3. AGENT CONSENSUS (20%): When 2+ agents independently arrive at the same conclusion through DIFFERENT reasoning paths, "
+            "this convergence is strong evidence. But consensus alone is not proof — all agents can be wrong if their shared reasoning is flawed.\n"
+            "4. GOOGLE LENS REFERENCE (10% — SUPPORTING EVIDENCE ONLY): Google Lens results are web search matches that serve as "
+            "REFERENCE MATERIAL to help verify agent claims and prevent hallucination. They are NOT ground truth. "
+            "Use Lens results to: (a) confirm or cast doubt on agent predictions, (b) discover information agents may have missed, "
+            "(c) resolve ties when agents disagree. But do NOT let Lens results override strong, well-reasoned agent analysis.\n\n"
+            "CRITICAL JUDGING RULES:\n"
+            "1. PRIORITIZE REASONING QUALITY: A single agent with deep, specific, well-evidenced analysis can outweigh two agents with shallow reasoning.\n"
+            "2. CROSS-EXAMINE VISUAL EVIDENCE: If an agent claims a ceramic line but the visible glaze, shape, or decoration contradicts it, overrule them.\n"
+            "3. AVOID BIAS: Do not automatically assume Vietnamese origin. Evaluate globally based on evidence.\n"
+            "4. LENS AS FACT-CHECK: Use Google Lens to verify claims, not to dictate the answer. "
+            "If agents provide strong reasoning that differs from Lens, trust the agents' expertise — Lens may match visually similar but different items.\n"
+            "5. LOOKALIKE AWARENESS: Be aware of commonly confused ceramics and use agent expertise to distinguish them:\n"
+            "   - Thai Sawankhalok celadon vs Chinese Longquan/Yaozhou celadon\n"
+            "   - Vietnamese Chu Dau blue-and-white vs Chinese Jingdezhen blue-and-white\n"
+            "   - Japanese Arita/Imari vs Chinese export porcelain\n"
+            "   - Korean Goryeo celadon vs Chinese Song Dynasty celadon\n"
+            "6. REASONING TRANSPARENCY: In your 'reasoning', explain:\n"
+            "   a) Which agent's argument was most convincing and WHY\n"
+            "   b) How visual features support your conclusion\n"
+            "   c) Whether Google Lens references confirm or contradict the agents\n"
+            "   d) Why you rejected the other agents' predictions\n\n"
+            "CONFIDENCE SCORING GUIDELINES:\n"
+            "- 85-100: Strong agent consensus backed by clear visual evidence\n"
+            "- 70-84: Good agent reasoning with supporting visual evidence, minor uncertainties\n"
+            "- 50-69: Agents disagree, mixed visual evidence\n"
+            "- 30-49: Weak reasoning, significant disagreement among agents\n"
+            "- 0-29: Very uncertain, insufficient evidence\n\n"
             "⚠️ CRITICAL — YOUR 'final_prediction' MUST be a SPECIFIC ceramic line/kiln name:\n"
             "REFERENCE LIST:\n"
-            "- VN: Bat Trang, Chu Dau, Phu Lang, Bau Truc, Bien Hoa, Lai Thieu, Tho Ha, Thanh Ha, Cay Mai\n"
-            "- CN: Jingdezhen, Longquan, Yixing, Dehua, Cizhou\n"
-            "- JP: Arita/Imari, Satsuma, Raku, Kutani, Bizen\n"
+            "- VN: Bat Trang, Chu Dau, Phu Lang, Bau Truc, Bien Hoa, Lai Thieu, Tho Ha, Thanh Ha, Cay Mai, Go Sanh\n"
+            "- CN: Jingdezhen, Longquan, Yixing, Dehua, Cizhou, Jun, Ge, Ding, Ru\n"
+            "- JP: Arita/Imari, Satsuma, Raku, Kutani, Bizen, Hagi, Mashiko\n"
             "- KR: Goryeo celadon, Buncheong\n"
             "- SEA: Sawankhalok, Sukhothai, Bencharong\n"
-            "- EU: Meissen, Sèvres, Wedgwood, Delftware, Majolica\n"
+            "- EU: Meissen, Sèvres, Wedgwood, Delftware, Majolica, Limoges, Royal Copenhagen, Capodimonte\n"
             "- ME: Iznik\n"
-            "- AM: Barro Negro, Mata Ortiz\n\n"
+            "- AM: Barro Negro, Mata Ortiz, Talavera\n\n"
             "⚠️ NEVER use generic terms like 'Traditional brown glaze Vietnamese ceramics', 'Ancient ceramics', 'Traditional pottery'. "
             "MUST be a SPECIFIC kiln/ceramic line name.\n\n"
             f"{lang_instruction}\n\n"
@@ -324,7 +441,7 @@ class JudgeAgent(BaseAgent):
             "  \"final_country\": \"(COUNTRY NAME)\",\n"
             "  \"final_era\": \"(SPECIFIC ERA)\",\n"
             "  \"certainty\": 0-100,\n"
-            "  \"reasoning\": \"(SYNTHESIS REASONING — why this line, why others are wrong)\",\n"
+            "  \"reasoning\": \"(SYNTHESIS REASONING — which agent was most convincing, visual evidence, how Lens references helped verify)\",\n"
             "  \"debate_summary\": \"(DEBATE SUMMARY among 3 agents)\"\n"
             "}"
         )
